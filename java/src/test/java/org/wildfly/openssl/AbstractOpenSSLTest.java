@@ -17,6 +17,9 @@
 
 package org.wildfly.openssl;
 
+import java.util.concurrent.TimeUnit;
+
+import org.junit.Before;
 import org.junit.BeforeClass;
 
 /**
@@ -40,11 +43,24 @@ public class AbstractOpenSSLTest {
             final String openSSLVersion = SSL.getInstance().version();
             // very crude (but acceptable) way to check the version
             if (openSSLVersion.contains("1.0.2")) {
-                // 1.0.2 doesn't support "Extended master secret" extension, which is enabled in
-                // Java by default. here we disable that extension on the Java side to allow
+                // 1.0.2 doesn't support "Extended master secret" extension (it is available since OpenSSL 1.1.0),
+                // which is enabled in Java by default. Here we disable that extension on the Java side to allow
                 // session resumption tests to pass
                 // @see http://www.oracle.com/technetwork/java/javase/8u161-relnotes-4021379.html#JDK-8148421
                 System.setProperty("jdk.tls.useExtendedMasterSecret", "false");
+            }
+        }
+    }
+
+    @Before
+    public void sanityTimeout() {
+        String timeout = System.getProperty("sanity.test.timeout");
+        if (timeout != null && Integer.valueOf(timeout) > 0) {
+            // Perform some sleep to give system time to free used socket...
+            try {
+                TimeUnit.SECONDS.sleep(Integer.valueOf(timeout));
+            } catch (InterruptedException e) {
+                e.printStackTrace();
             }
         }
     }
