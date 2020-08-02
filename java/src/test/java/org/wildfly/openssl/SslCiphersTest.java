@@ -93,32 +93,33 @@ public class SslCiphersTest extends AbstractOpenSSLTest {
             Thread acceptThread = new Thread(echo);
             acceptThread.start();
 
-            final SSLSocket socket = (SSLSocket) SSLSocketFactory.getDefault().createSocket();
-            socket.setReuseAddress(true);
-            socket.setEnabledCipherSuites(new String[]{suite});
-            socket.connect(SSLTestUtils.createSocketAddress());
-            socket.getOutputStream().write("hello world".getBytes(StandardCharsets.US_ASCII));
-            byte[] data = new byte[100];
-            int read = socket.getInputStream().read(data);
+            try (final SSLSocket socket = (SSLSocket) SSLSocketFactory.getDefault().createSocket()) {
+                socket.setReuseAddress(true);
+                socket.setEnabledCipherSuites(new String[]{suite});
+                socket.connect(SSLTestUtils.createSocketAddress());
+                socket.getOutputStream().write("hello world".getBytes(StandardCharsets.US_ASCII));
+                byte[] data = new byte[100];
+                int read = socket.getInputStream().read(data);
 
-            Assert.assertEquals("hello world", new String(data, 0, read));
-            //make sure the names match
-            String cipherSuite = socket.getSession().getCipherSuite();
-            SSLEngine sslEngine = engineRef.get();
-            SSLSession session = sslEngine.getSession();
-            // SSL is an alias for TLS, Windows and IBM J9 seem to use SSL for simplicity we'll just replace SSL with
-            // TLS to match what we're expecting
-            if(cipherSuite.startsWith("SSL")) {
-                cipherSuite = cipherSuite.replace("SSL", "TLS");
+                Assert.assertEquals("hello world", new String(data, 0, read));
+                //make sure the names match
+                String cipherSuite = socket.getSession().getCipherSuite();
+                SSLEngine sslEngine = engineRef.get();
+                SSLSession session = sslEngine.getSession();
+                // SSL is an alias for TLS, Windows and IBM J9 seem to use SSL for simplicity we'll just replace SSL with
+                // TLS to match what we're expecting
+                if (cipherSuite.startsWith("SSL")) {
+                    cipherSuite = cipherSuite.replace("SSL", "TLS");
+                }
+                Assert.assertEquals(session.getCipherSuite(), cipherSuite);
+                Assert.assertEquals(session.getCipherSuite(), suite);
+                Assert.assertArrayEquals(socket.getSession().getId(), sessionID.get());
+                socket.getSession().invalidate();
+            } finally {
+                echo.stop();
+                serverSocket.close();
+                acceptThread.join();
             }
-            Assert.assertEquals(session.getCipherSuite(), cipherSuite);
-            Assert.assertEquals(session.getCipherSuite(), suite);
-            Assert.assertArrayEquals(socket.getSession().getId(), sessionID.get());
-            socket.getSession().invalidate();
-            socket.close();
-            echo.stop();
-            serverSocket.close();
-            acceptThread.join();
         }
     }
 
@@ -154,29 +155,29 @@ public class SslCiphersTest extends AbstractOpenSSLTest {
             acceptThread.start();
 
             final SSLContext clientContext = SSLTestUtils.createClientSSLContext("openssl.TLSv1.3");
-            final SSLSocket socket = (SSLSocket) clientContext.getSocketFactory().createSocket();
-            socket.setReuseAddress(true);
-            socket.setEnabledCipherSuites(new String[]{"TLS_RSA_WITH_AES_128_CBC_SHA256", suite});
-            socket.connect(SSLTestUtils.createSocketAddress());
-            socket.getOutputStream().write("hello world".getBytes(StandardCharsets.US_ASCII));
-            byte[] data = new byte[100];
-            int read = socket.getInputStream().read(data);
+            try (final SSLSocket socket = (SSLSocket) clientContext.getSocketFactory().createSocket()) {
+                socket.setReuseAddress(true);
+                socket.setEnabledCipherSuites(new String[]{"TLS_RSA_WITH_AES_128_CBC_SHA256", suite});
+                socket.connect(SSLTestUtils.createSocketAddress());
+                socket.getOutputStream().write("hello world".getBytes(StandardCharsets.US_ASCII));
+                byte[] data = new byte[100];
+                int read = socket.getInputStream().read(data);
 
-            Assert.assertEquals("hello world", new String(data, 0, read));
-            //make sure the names match
-            String cipherSuite = socket.getSession().getCipherSuite();
-            String protocol = socket.getSession().getProtocol();
-            SSLEngine sslEngine = engineRef.get();
-            SSLSession session = sslEngine.getSession();
-            Assert.assertEquals(session.getCipherSuite(), cipherSuite);
-            Assert.assertEquals(session.getCipherSuite(), suite);
-            Assert.assertEquals(session.getProtocol(), protocol);
-
-            socket.getSession().invalidate();
-            socket.close();
-            echo.stop();
-            serverSocket.close();
-            acceptThread.join();
+                Assert.assertEquals("hello world", new String(data, 0, read));
+                //make sure the names match
+                String cipherSuite = socket.getSession().getCipherSuite();
+                String protocol = socket.getSession().getProtocol();
+                SSLEngine sslEngine = engineRef.get();
+                SSLSession session = sslEngine.getSession();
+                Assert.assertEquals(session.getCipherSuite(), cipherSuite);
+                Assert.assertEquals(session.getCipherSuite(), suite);
+                Assert.assertEquals(session.getProtocol(), protocol);
+                socket.getSession().invalidate();
+            } finally {
+                echo.stop();
+                serverSocket.close();
+                acceptThread.join();
+            }
         }
     }
 }

@@ -74,74 +74,94 @@ public class ClientSessionTestBase extends AbstractOpenSSLTest {
                 ServerSocket serverSocket1 = SSLTestUtils.createServerSocket(port1);
                 ServerSocket serverSocket2 = SSLTestUtils.createServerSocket(port2)
         ) {
+            Thread acceptThread1 = null;
+            Thread acceptThread2 = null;
+            try {
+                acceptThread1 = startServer(serverSocket1, serverProvider);
+                acceptThread2 = startServer(serverSocket2, serverProvider);
 
-            final Thread acceptThread1 = startServer(serverSocket1, serverProvider);
-            final Thread acceptThread2 = startServer(serverSocket2, serverProvider);
+                SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
+                final SSLSessionContext clientSession = clientContext.getClientSessionContext();
+                byte[] host1SessionId = connectAndWrite(clientContext, port1);
+                byte[] host2SessionId = connectAndWrite(clientContext, port2);
 
-            SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
-            final SSLSessionContext clientSession = clientContext.getClientSessionContext();
-            byte[] host1SessionId = connectAndWrite(clientContext, port1);
-            byte[] host2SessionId = connectAndWrite(clientContext, port2);
+                // No timeout was set, id's should be identical
+                Assert.assertArrayEquals(host1SessionId, connectAndWrite(clientContext, port1));
+                Assert.assertArrayEquals(host2SessionId, connectAndWrite(clientContext, port2));
 
-            // No timeout was set, id's should be identical
-            Assert.assertArrayEquals(host1SessionId, connectAndWrite(clientContext, port1));
-            Assert.assertArrayEquals(host2SessionId, connectAndWrite(clientContext, port2));
-
-            // Set the session timeout to 1 second and sleep for 2 to ensure the timeout works
-            clientSession.setSessionTimeout(1);
-            TimeUnit.SECONDS.sleep(2L);
-            Assert.assertFalse(Arrays.equals(host1SessionId, connectAndWrite(clientContext, port1)));
-            Assert.assertFalse(Arrays.equals(host1SessionId, connectAndWrite(clientContext, port2)));
-
-            serverSocket1.close();
-            serverSocket2.close();
-            acceptThread1.join();
-            acceptThread2.join();
+                // Set the session timeout to 1 second and sleep for 2 to ensure the timeout works
+                clientSession.setSessionTimeout(1);
+                TimeUnit.SECONDS.sleep(2L);
+                Assert.assertFalse(Arrays.equals(host1SessionId, connectAndWrite(clientContext, port1)));
+                Assert.assertFalse(Arrays.equals(host1SessionId, connectAndWrite(clientContext, port2)));
+            } finally {
+                serverSocket1.close();
+                serverSocket2.close();
+                if (acceptThread1 != null) {
+                    acceptThread1.join();
+                }
+                if (acceptThread2 != null) {
+                    acceptThread2.join();
+                }
+            }
         }
     }
 
     void testSessionTimeoutTLS13(String serverProvider, String clientProvider) throws Exception {
         final int port1 = PORT;
         final int port2 = SSLTestUtils.SECONDARY_PORT;
-        Server server1 = startServerTLS13(serverProvider, port1);
-        Server server2 = startServerTLS13(serverProvider, port2);
-        server1.signal();
-        server2.signal();
-        SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
-        SSLSessionContext clientSession = clientContext.getClientSessionContext();
-        while (! server1.started || ! server2.started) {
-            Thread.yield();
-        }
-        SSLSession firstSession1 = connect(clientContext, port1);
-        Assert.assertFalse(((OpenSSlSession) firstSession1).isReused());
-        SSLSession firstSession2 = connect(clientContext, port2);
-        Assert.assertFalse(((OpenSSlSession) firstSession2).isReused());
-        server1.signal();
-        server2.signal();
 
-        // No timeout was set, sessions should be reused
-        SSLSession secondSession1 = connect(clientContext, port1);
-        Assert.assertTrue(((OpenSSlSession) secondSession1).isReused());
-        SSLSession secondSession2 = connect(clientContext, port2);
-        Assert.assertTrue(((OpenSSlSession) secondSession2).isReused());
-        server1.signal();
-        server2.signal();
+        Server server1 = null;
+        Server server2 = null;
+        try {
+            server1 = startServerTLS13(serverProvider, port1);
+            server2 = startServerTLS13(serverProvider, port2);
+            server1.signal();
+            server2.signal();
+            SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
+            SSLSessionContext clientSession = clientContext.getClientSessionContext();
+            while (!server1.started || !server2.started) {
+                Thread.yield();
+            }
+            SSLSession firstSession1 = connect(clientContext, port1);
+            Assert.assertFalse(((OpenSSlSession) firstSession1).isReused());
+            SSLSession firstSession2 = connect(clientContext, port2);
+            Assert.assertFalse(((OpenSSlSession) firstSession2).isReused());
+            server1.signal();
+            server2.signal();
 
-        // Set the session timeout to 1 second and sleep for 2 to ensure the timeout works
-        clientSession.setSessionTimeout(1);
-        TimeUnit.SECONDS.sleep(2L);
-        SSLSession thirdSession1 = connect(clientContext, port1);
-        Assert.assertFalse(((OpenSSlSession) thirdSession1).isReused());
-        SSLSession thirdSession2 = connect(clientContext, port2);
-        Assert.assertFalse(((OpenSSlSession) thirdSession2).isReused());
-        thirdSession1.invalidate();
-        thirdSession2.invalidate();
-        server1.go = false;
-        server1.signal();
-        server2.go = false;
-        server2.signal();
-        while (server1.started || server2.started) {
-            Thread.yield();
+            // No timeout was set, sessions should be reused
+            SSLSession secondSession1 = connect(clientContext, port1);
+            Assert.assertTrue(((OpenSSlSession) secondSession1).isReused());
+            SSLSession secondSession2 = connect(clientContext, port2);
+            Assert.assertTrue(((OpenSSlSession) secondSession2).isReused());
+            server1.signal();
+            server2.signal();
+
+            // Set the session timeout to 1 second and sleep for 2 to ensure the timeout works
+            clientSession.setSessionTimeout(1);
+            TimeUnit.SECONDS.sleep(2L);
+            SSLSession thirdSession1 = connect(clientContext, port1);
+            Assert.assertFalse(((OpenSSlSession) thirdSession1).isReused());
+            SSLSession thirdSession2 = connect(clientContext, port2);
+            Assert.assertFalse(((OpenSSlSession) thirdSession2).isReused());
+            thirdSession1.invalidate();
+            thirdSession2.invalidate();
+        } finally {
+            if (server1 != null) {
+                server1.go = false;
+                server1.signal();
+                while (server1.started) {
+                    Thread.yield();
+                }
+            }
+            if (server2 != null) {
+                server2.go = false;
+                server2.signal();
+                while (server2.started) {
+                    Thread.yield();
+                }
+            }
         }
     }
 
@@ -150,54 +170,65 @@ public class ClientSessionTestBase extends AbstractOpenSSLTest {
 
         try (ServerSocket serverSocket1 = SSLTestUtils.createServerSocket(port)) {
 
-            final Thread acceptThread1 = startServer(serverSocket1, serverProvider);
-            final FutureSessionId future = new FutureSessionId();
-            SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
-            try (SSLSocket socket = (SSLSocket) clientContext.getSocketFactory().createSocket()) {
-                socket.setReuseAddress(true);
-                socket.connect(new InetSocketAddress(SSLTestUtils.HOST, port));
-                socket.addHandshakeCompletedListener(new FutureHandshakeCompletedListener(future));
-                socket.getOutputStream().write(HELLO_WORLD);
-                socket.getSession().invalidate();
-                socket.getOutputStream().flush();
+            Thread acceptThread1 = null;
+            try {
+                acceptThread1 = startServer(serverSocket1, serverProvider);
+                final FutureSessionId future = new FutureSessionId();
+                SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
+                try (SSLSocket socket = (SSLSocket) clientContext.getSocketFactory().createSocket()) {
+                    socket.setReuseAddress(true);
+                    socket.connect(new InetSocketAddress(SSLTestUtils.HOST, port));
+                    socket.addHandshakeCompletedListener(new FutureHandshakeCompletedListener(future));
+                    socket.getOutputStream().write(HELLO_WORLD);
+                    socket.getSession().invalidate();
+                    socket.getOutputStream().flush();
+                }
+                byte[] invalided = future.get();
+                Assert.assertNotNull(invalided);
+                byte[] newSession = connectAndWrite(clientContext, port);
+                Assert.assertNotNull(newSession);
+
+                Assert.assertFalse(Arrays.equals(invalided, newSession));
+            } finally {
+                serverSocket1.close();
+                if (acceptThread1 != null) {
+                    acceptThread1.join();
+                }
             }
-            byte[] invalided = future.get();
-            Assert.assertNotNull(invalided);
-            byte[] newSession = connectAndWrite(clientContext, port);
-            Assert.assertNotNull(newSession);
-
-            Assert.assertFalse(Arrays.equals(invalided, newSession));
-
-            serverSocket1.close();
-            acceptThread1.join();
         }
     }
 
     void testSessionInvalidationTLS13(String serverProvider, String clientProvider) throws Exception {
         final int port1 = PORT;
 
-        Server server = startServerTLS13(serverProvider, port1);
-        server.signal();
-        SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
-        SSLSessionContext clientSession = clientContext.getClientSessionContext();
-        while (! server.started) {
-            Thread.yield();
-        }
-        SSLSession firstSession = connect(clientContext, port1);
-        server.signal();
-        Assert.assertTrue(firstSession.isValid());
-        Assert.assertFalse(((OpenSSlSession) firstSession).isReused());
-        firstSession.invalidate();
-        Assert.assertFalse(firstSession.isValid());
-        SSLSession secondSession = connect(clientContext, port1);
-        Assert.assertTrue(secondSession.isValid());
-        Assert.assertFalse(((OpenSSlSession) secondSession).isReused());
-        firstSession.invalidate();
-        secondSession.invalidate();
-        server.go = false;
-        server.signal();
-        while (server.started) {
-            Thread.yield();
+        Server server = null;
+        try {
+            server = startServerTLS13(serverProvider, port1);
+            server.signal();
+            SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
+            SSLSessionContext clientSession = clientContext.getClientSessionContext();
+            while (!server.started) {
+                Thread.yield();
+            }
+            SSLSession firstSession = connect(clientContext, port1);
+            server.signal();
+            Assert.assertTrue(firstSession.isValid());
+            Assert.assertFalse(((OpenSSlSession) firstSession).isReused());
+            firstSession.invalidate();
+            Assert.assertFalse(firstSession.isValid());
+            SSLSession secondSession = connect(clientContext, port1);
+            Assert.assertTrue(secondSession.isValid());
+            Assert.assertFalse(((OpenSSlSession) secondSession).isReused());
+            firstSession.invalidate();
+            secondSession.invalidate();
+        } finally {
+            if (server != null) {
+                server.go = false;
+                server.signal();
+                while (server.started) {
+                    Thread.yield();
+                }
+            }
         }
     }
 
@@ -210,43 +241,52 @@ public class ClientSessionTestBase extends AbstractOpenSSLTest {
                 ServerSocket serverSocket2 = SSLTestUtils.createServerSocket(port2)
         ) {
 
-            final Thread acceptThread1 = startServer(serverSocket1, serverProvider);
-            final Thread acceptThread2 = startServer(serverSocket2, serverProvider);
-            SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
+            Thread acceptThread1 = null;
+            Thread acceptThread2 = null;
+            try {
+                acceptThread1 = startServer(serverSocket1, serverProvider);
+                acceptThread2 = startServer(serverSocket2, serverProvider);
+                SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
 
-            final SSLSessionContext clientSession = clientContext.getClientSessionContext();
+                final SSLSessionContext clientSession = clientContext.getClientSessionContext();
 
-            byte[] host1SessionId = connectAndWrite(clientContext, port1);
-            byte[] host2SessionId = connectAndWrite(clientContext, port2);
+                byte[] host1SessionId = connectAndWrite(clientContext, port1);
+                byte[] host2SessionId = connectAndWrite(clientContext, port2);
 
-            // No cache limit was set, id's should be identical
-            Assert.assertArrayEquals(host1SessionId, connectAndWrite(clientContext, port1));
-            Assert.assertArrayEquals(host2SessionId, connectAndWrite(clientContext, port2));
+                // No cache limit was set, id's should be identical
+                Assert.assertArrayEquals(host1SessionId, connectAndWrite(clientContext, port1));
+                Assert.assertArrayEquals(host2SessionId, connectAndWrite(clientContext, port2));
 
-            // Set the cache size to 1
-            clientSession.setSessionCacheSize(1);
-            // The second session id should be the one kept as it was the last one used
-            Assert.assertArrayEquals(host2SessionId, connectAndWrite(clientContext, port2));
-            // Connect again to the first host, this should not match the initial session id for the first host
-            byte[] nextId = connectAndWrite(clientContext, port1);
-            Assert.assertFalse(Arrays.equals(host1SessionId, nextId));
-            // Once more connect to the first host and this should match the previous session id
-            Assert.assertArrayEquals(nextId, connectAndWrite(clientContext, port1));
-            // Connect to the second host which should be purged at this point
-            Assert.assertFalse(Arrays.equals(nextId, connectAndWrite(clientContext, port2)));
+                // Set the cache size to 1
+                clientSession.setSessionCacheSize(1);
+                // The second session id should be the one kept as it was the last one used
+                Assert.assertArrayEquals(host2SessionId, connectAndWrite(clientContext, port2));
+                // Connect again to the first host, this should not match the initial session id for the first host
+                byte[] nextId = connectAndWrite(clientContext, port1);
+                Assert.assertFalse(Arrays.equals(host1SessionId, nextId));
+                // Once more connect to the first host and this should match the previous session id
+                Assert.assertArrayEquals(nextId, connectAndWrite(clientContext, port1));
+                // Connect to the second host which should be purged at this point
+                Assert.assertFalse(Arrays.equals(nextId, connectAndWrite(clientContext, port2)));
 
-            // Reset the cache limit and ensure both sessions are cached
-            clientSession.setSessionCacheSize(0);
-            host1SessionId = connectAndWrite(clientContext, port1);
-            host2SessionId = connectAndWrite(clientContext, port2);
+                // Reset the cache limit and ensure both sessions are cached
+                clientSession.setSessionCacheSize(0);
+                host1SessionId = connectAndWrite(clientContext, port1);
+                host2SessionId = connectAndWrite(clientContext, port2);
 
-            // No cache limit was set, id's should be identical
-            Assert.assertArrayEquals(host1SessionId, connectAndWrite(clientContext, port1));
-            Assert.assertArrayEquals(host2SessionId, connectAndWrite(clientContext, port2));
-            serverSocket1.close();
-            serverSocket2.close();
-            acceptThread1.join();
-            acceptThread2.join();
+                // No cache limit was set, id's should be identical
+                Assert.assertArrayEquals(host1SessionId, connectAndWrite(clientContext, port1));
+                Assert.assertArrayEquals(host2SessionId, connectAndWrite(clientContext, port2));
+            } finally {
+                serverSocket1.close();
+                serverSocket2.close();
+                if (acceptThread1 != null) {
+                    acceptThread1.join();
+                }
+                if (acceptThread2 != null) {
+                    acceptThread2.join();
+                }
+            }
         }
     }
 
@@ -254,76 +294,87 @@ public class ClientSessionTestBase extends AbstractOpenSSLTest {
         final int port1 = PORT;
         final int port2 = SSLTestUtils.SECONDARY_PORT;
 
-        Server server1 = startServerTLS13(serverProvider, port1);
-        Server server2 = startServerTLS13(serverProvider, port2);
-        server1.signal();
-        server2.signal();
+        Server server1 = null;
+        Server server2 = null;
+        try {
+            server1 = startServerTLS13(serverProvider, port1);
+            server2 = startServerTLS13(serverProvider, port2);
+            server1.signal();
+            server2.signal();
 
-        SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
-        final SSLSessionContext clientSession = clientContext.getClientSessionContext();
+            SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
+            final SSLSessionContext clientSession = clientContext.getClientSessionContext();
 
-        while (! server1.started || ! server2.started) {
-            Thread.yield();
-        }
+            while (!server1.started || !server2.started) {
+                Thread.yield();
+            }
 
-        SSLSession host1Session = connect(clientContext, port1);
-        Assert.assertFalse(((OpenSSlSession) host1Session).isReused());
-        SSLSession host2Session = connect(clientContext, port2);
-        Assert.assertFalse(((OpenSSlSession) host2Session).isReused());
-        server1.signal();
-        server2.signal();
+            SSLSession host1Session = connect(clientContext, port1);
+            Assert.assertFalse(((OpenSSlSession) host1Session).isReused());
+            SSLSession host2Session = connect(clientContext, port2);
+            Assert.assertFalse(((OpenSSlSession) host2Session).isReused());
+            server1.signal();
+            server2.signal();
 
-        // No cache limit was set, id's should be identical
-        host1Session = connect(clientContext, port1);
-        Assert.assertTrue(((OpenSSlSession) host1Session).isReused());
-        host2Session = connect(clientContext, port2);
-        Assert.assertTrue(((OpenSSlSession) host2Session).isReused());
-        server1.signal();
-        server2.signal();
+            // No cache limit was set, id's should be identical
+            host1Session = connect(clientContext, port1);
+            Assert.assertTrue(((OpenSSlSession) host1Session).isReused());
+            host2Session = connect(clientContext, port2);
+            Assert.assertTrue(((OpenSSlSession) host2Session).isReused());
+            server1.signal();
+            server2.signal();
 
-        // Set the cache size to 1
-        clientSession.setSessionCacheSize(1);
-        // The second session should be the one kept as it was the last one used
-        host2Session = connect(clientContext, port2);
-        Assert.assertTrue(((OpenSSlSession) host2Session).isReused());
-        // Connect again to the first host, this should not match the initial session for the first host
-        SSLSession nextSession = connect(clientContext, port1);
-        Assert.assertFalse(((OpenSSlSession) nextSession).isReused());
-        server1.signal();
-        server2.signal();
+            // Set the cache size to 1
+            clientSession.setSessionCacheSize(1);
+            // The second session should be the one kept as it was the last one used
+            host2Session = connect(clientContext, port2);
+            Assert.assertTrue(((OpenSSlSession) host2Session).isReused());
+            // Connect again to the first host, this should not match the initial session for the first host
+            SSLSession nextSession = connect(clientContext, port1);
+            Assert.assertFalse(((OpenSSlSession) nextSession).isReused());
+            server1.signal();
+            server2.signal();
 
-        // Once more connect to the first host and this should match the previous session
-        nextSession = connect(clientContext, port1);
-        Assert.assertTrue(((OpenSSlSession) nextSession).isReused());
-        // Connect to the second host which should be purged at this point
-        nextSession = connect(clientContext, port2);
-        Assert.assertFalse(((OpenSSlSession) nextSession).isReused());
-        server1.signal();
-        server2.signal();
+            // Once more connect to the first host and this should match the previous session
+            nextSession = connect(clientContext, port1);
+            Assert.assertTrue(((OpenSSlSession) nextSession).isReused());
+            // Connect to the second host which should be purged at this point
+            nextSession = connect(clientContext, port2);
+            Assert.assertFalse(((OpenSSlSession) nextSession).isReused());
+            server1.signal();
+            server2.signal();
 
-        // Reset the cache limit and ensure both sessions are cached
-        clientSession.setSessionCacheSize(0);
-        host1Session = connect(clientContext, port1);
-        Assert.assertFalse(((OpenSSlSession) host1Session).isReused());
-        host2Session = connect(clientContext, port2);
-        Assert.assertTrue(((OpenSSlSession) host2Session).isReused());
-        server1.signal();
-        server2.signal();
+            // Reset the cache limit and ensure both sessions are cached
+            clientSession.setSessionCacheSize(0);
+            host1Session = connect(clientContext, port1);
+            Assert.assertFalse(((OpenSSlSession) host1Session).isReused());
+            host2Session = connect(clientContext, port2);
+            Assert.assertTrue(((OpenSSlSession) host2Session).isReused());
+            server1.signal();
+            server2.signal();
 
-        // No cache limit was set, id's should be identical
-        host1Session = connect(clientContext, port1);
-        Assert.assertTrue(((OpenSSlSession) host1Session).isReused());
-        host2Session = connect(clientContext, port2);
-        Assert.assertTrue(((OpenSSlSession) host2Session).isReused());
-        host1Session.invalidate();
-        host2Session.invalidate();
-        server1.go = false;
-        server1.signal();
-        server2.go = false;
-        server2.signal();
-
-        while (server1.started || server2.started) {
-            Thread.yield();
+            // No cache limit was set, id's should be identical
+            host1Session = connect(clientContext, port1);
+            Assert.assertTrue(((OpenSSlSession) host1Session).isReused());
+            host2Session = connect(clientContext, port2);
+            Assert.assertTrue(((OpenSSlSession) host2Session).isReused());
+            host1Session.invalidate();
+            host2Session.invalidate();
+        } finally {
+            if (server1 != null) {
+                server1.go = false;
+                server1.signal();
+                while (server1.started) {
+                    Thread.yield();
+                }
+            }
+            if (server2 != null) {
+                server2.go = false;
+                server2.signal();
+                while (server2.started) {
+                    Thread.yield();
+                }
+            }
         }
     }
 
@@ -333,17 +384,20 @@ public class ClientSessionTestBase extends AbstractOpenSSLTest {
         final ExecutorService executor = Executors.newFixedThreadPool(numThreads);
         try (ServerSocket serverSocket = SSLTestUtils.createServerSocket(port)) {
             final Thread acceptThread = startServer(serverSocket, serverProvider);
-            final SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
-            final List<Future<Void>> taskResults = new ArrayList<>();
-            for (int i = 0; i < numThreads; i++) {
-                taskResults.add(executor.submit(new SocketWriter(clientContext, SSLTestUtils.HOST, port)));
+            try {
+                final SSLContext clientContext = SSLTestUtils.createClientSSLContext(clientProvider);
+                final List<Future<Void>> taskResults = new ArrayList<>();
+                for (int i = 0; i < numThreads; i++) {
+                    taskResults.add(executor.submit(new SocketWriter(clientContext, SSLTestUtils.HOST, port)));
+                }
+                // wait for results
+                for (int i = 0; i < numThreads; i++) {
+                    taskResults.get(i).get(10, TimeUnit.SECONDS);
+                }
+            } finally {
+                serverSocket.close();
+                acceptThread.join();
             }
-            // wait for results
-            for (int i = 0; i < numThreads; i++) {
-                taskResults.get(i).get(10, TimeUnit.SECONDS);
-            }
-            serverSocket.close();
-            acceptThread.join();
         } finally {
             executor.shutdownNow();
         }
@@ -366,33 +420,38 @@ public class ClientSessionTestBase extends AbstractOpenSSLTest {
             final Thread acceptThread = new Thread(echo);
             acceptThread.start();
 
-            byte[] sessionID;
-            // Create a connection to get a session ID, all other session id's should match
-            SSLContext clientContext = SSLTestUtils.createClientSSLContext(provider);
-            try (SSLSocket socket = (SSLSocket) clientContext.getSocketFactory().createSocket()) {
-                socket.setReuseAddress(true);
-                socket.connect(SSLTestUtils.createSocketAddress());
-                socket.startHandshake();
-                final byte[] id = socket.getSession().getId();
-                sessionID = Arrays.copyOf(id, id.length);
-            }
+            try {
+                byte[] sessionID;
+                // Create a connection to get a session ID, all other session id's should match
+                SSLContext clientContext = SSLTestUtils.createClientSSLContext(provider);
+                try (SSLSocket socket = (SSLSocket) clientContext.getSocketFactory().createSocket()) {
+                    socket.setReuseAddress(true);
+                    socket.connect(SSLTestUtils.createSocketAddress());
+                    toClose.add(socket);
+                    socket.startHandshake();
+                    final byte[] id = socket.getSession().getId();
+                    sessionID = Arrays.copyOf(id, id.length);
+                }
 
-            final CountDownLatch latch = new CountDownLatch(iterations);
+                final CountDownLatch latch = new CountDownLatch(iterations);
 
-            for (int i = 0; i < iterations; i++) {
-                final SSLSocket socket = (SSLSocket) clientContext.getSocketFactory().createSocket();
-                socket.setReuseAddress(true);
-                socket.connect(SSLTestUtils.createSocketAddress());
-                socket.addHandshakeCompletedListener(new AssertingHandshakeCompletedListener(latch, sessionID, getExpectedProtocolFromProvider(provider)));
-                socket.startHandshake();
-                toClose.add(socket);
+                for (int i = 0; i < iterations; i++) {
+                    final SSLSocket socket = (SSLSocket) clientContext.getSocketFactory().createSocket();
+                    socket.setReuseAddress(true);
+                    socket.connect(SSLTestUtils.createSocketAddress());
+                    socket.addHandshakeCompletedListener(new AssertingHandshakeCompletedListener(latch, sessionID,
+                            getExpectedProtocolFromProvider(provider)));
+                    socket.startHandshake();
+                    toClose.add(socket);
+                }
+                if (!latch.await(30, TimeUnit.SECONDS)) {
+                    Assert.fail("Failed to complete handshakes");
+                }
+            } finally {
+                serverSocket.close();
+                echo.stop();
+                acceptThread.join();
             }
-            if (!latch.await(30, TimeUnit.SECONDS)) {
-                Assert.fail("Failed to complete handshakes");
-            }
-            serverSocket.close();
-            echo.stop();
-            acceptThread.join();
         } finally {
             for (SSLSocket socket : toClose) {
                 try {

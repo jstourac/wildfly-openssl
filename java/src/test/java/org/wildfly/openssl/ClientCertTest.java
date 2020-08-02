@@ -60,10 +60,10 @@ public class ClientCertTest extends AbstractOpenSSLTest {
                 if (! isTLS13Supported()) {
                     Assert.assertArrayEquals(socket.getSession().getId(), sessionID.get());
                 }
+            } finally {
+                serverSocket.close();
+                acceptThread.join();
             }
-
-            serverSocket.close();
-            acceptThread.join();
         }
     }
 
